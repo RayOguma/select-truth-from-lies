@@ -1,0 +1,8 @@
+node_modules/
+.DS_Store
+Thumbs.db
+
+# 答えが書いてあるので公開しない（手元だけに置く）
+docs/design.md
+db/verify.mjs
+db/build-seed.mjs
