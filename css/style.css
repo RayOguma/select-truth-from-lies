@@ -490,7 +490,6 @@ button { font: inherit; }
 .spot-apt-door.locked.opened::before { background: #3fd68a; box-shadow: 0 0 8px #3fd68a; }
 .spot-apt-door.opened { background: #1d1b19; }
 .spot-apt-door.opened::after { display: none; }
-.spot-apt-door.vanished { opacity: 0; pointer-events: none; }
 .spot-stairs {
   border: 5px solid #6c6a66;
   border-bottom: 0;

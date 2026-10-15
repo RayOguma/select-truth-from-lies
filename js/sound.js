@@ -146,10 +146,6 @@ export const sfx = {
     noise({ dur: 0.45, gain: 0.18, freq: 380, delay: 0.35 });
     tone({ freq: 95, type: 'triangle', dur: 0.5, gain: 0.14, slide: 60, delay: 0.35 });
   },
-  vanish() {
-    tone({ freq: 900, dur: 0.7, gain: 0.04, slide: 180 });
-    noise({ dur: 0.6, gain: 0.04, freq: 2500, filter: 'highpass' });
-  },
   appear() {
     chord([1047, 1319, 1568, 2093], { gap: 0.14, dur: 0.8, gain: 0.035, type: 'sine' });
   },

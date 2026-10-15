@@ -378,7 +378,6 @@ function showRoom(roomId = state.room ?? S.CHAPTERS[state.chapter].room) {
     const cls = [
       'spot', spot.class,
       finale?.open === spot.id ? 'opened' : '',
-      finale?.vanish?.includes(spot.id) ? 'vanished' : '',
     ].join(' ');
     const current = solved && spot.lookSolved ? { ...spot, look: spot.lookSolved } : spot;
     stage.append(h('button', { class: cls, style: pos(spot), 'data-id': spot.id, 'data-appear': spot.solved ? '' : null, 'aria-label': spot.label, onclick: () => look(current) },
@@ -1238,7 +1237,7 @@ async function playFinale(n) {
   showRoom(S.CHAPTERS[n].room);
   const stage = app.querySelector('.stage');
   // showRoom はクリア後の状態で描くので、いったん元に戻してから動かす
-  stage.querySelectorAll('.opened, .vanished').forEach((el) => el.classList.remove('opened', 'vanished'));
+  stage.querySelectorAll('.opened').forEach((el) => el.classList.remove('opened'));
   const appearing = finale.appear ? [...stage.querySelectorAll('[data-appear]')] : [];
   appearing.forEach((el) => el.classList.add('pre-appear'));
   await sleep(600);
@@ -1247,14 +1246,6 @@ async function playFinale(n) {
       appearing.forEach((el) => el.classList.remove('pre-appear'));
       sfx.appear();
     }, 2600);
-  }
-  if (finale.vanish) {
-    finale.vanish.forEach((id, i) => {
-      setTimeout(() => {
-        stage.querySelector(`[data-id="${id}"]`)?.classList.add('vanished');
-        sfx.vanish();
-      }, 1800 + i * 700);
-    });
   }
   const lines = [...finale.lines];
   if (finale.open) {
