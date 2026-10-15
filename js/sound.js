@@ -91,7 +91,7 @@ export const sfx = {
     const now = performance.now();
     if (now - lastType < 45) return;
     lastType = now;
-    tone({ freq: 760 + Math.random() * 160, type: 'square', dur: 0.025, gain: 0.025 });
+    tone({ freq: 760 + Math.random() * 160, type: 'square', dur: 0.03, gain: 0.06 });
   },
   key() {
     noise({ dur: 0.03, gain: 0.12, freq: 2800, filter: 'bandpass', q: 1.5 });
@@ -145,9 +145,6 @@ export const sfx = {
     tone({ freq: 1660, type: 'square', dur: 0.08, gain: 0.03, delay: 0.09 });
     noise({ dur: 0.45, gain: 0.18, freq: 380, delay: 0.35 });
     tone({ freq: 95, type: 'triangle', dur: 0.5, gain: 0.14, slide: 60, delay: 0.35 });
-  },
-  appear() {
-    chord([1047, 1319, 1568, 2093], { gap: 0.14, dur: 0.8, gain: 0.035, type: 'sine' });
   },
   bad() {
     tone({ freq: 55, type: 'sawtooth', dur: 3.5, gain: 0.07, attack: 0.3 });

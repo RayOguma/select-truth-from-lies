@@ -362,25 +362,24 @@ function showRoom(roomId = state.room ?? S.CHAPTERS[state.chapter].room) {
   save();
   const room = S.ROOMS[roomId];
   const owner = room.chapter ?? state.chapter;
-  const solved = Boolean(state.solved[owner]);
   const stage = h('div', { class: `stage stage-${roomId}` },
     h('div', { class: 'room-wall' }),
     h('div', { class: 'room-floor' }),
   );
   for (const d of room.decor) {
-    if (d.solved && !solved) continue;
-    stage.append(h('div', { class: d.class, style: pos(d), 'data-appear': d.solved ? '' : null }));
+    stage.append(h('div', { class: d.class, style: pos(d) }));
   }
-  const finale = solved ? S.CHAPTERS[owner].finale : null;
   for (const spot of room.hotspots) {
-    if (spot.solved && !solved) continue;
+    // solvedChapter があるものは、その章を解いたかどうかで決める（エントランスのように、章をまたいで行く場所の物）
+    const chapterOf = spot.solvedChapter ?? owner;
+    const spotSolved = Boolean(state.solved[chapterOf]);
     if (spot.hideWhenTaken && state.items.includes(spot.item)) continue;
     const cls = [
       'spot', spot.class,
-      finale?.open === spot.id ? 'opened' : '',
+      spotSolved && S.CHAPTERS[chapterOf].finale?.open === spot.id ? 'opened' : '',
     ].join(' ');
-    const current = solved && spot.lookSolved ? { ...spot, look: spot.lookSolved } : spot;
-    stage.append(h('button', { class: cls, style: pos(spot), 'data-id': spot.id, 'data-appear': spot.solved ? '' : null, 'aria-label': spot.label, onclick: () => look(current) },
+    const current = spotSolved && spot.lookSolved ? { ...spot, look: spot.lookSolved } : spot;
+    stage.append(h('button', { class: cls, style: pos(spot), 'data-id': spot.id, 'aria-label': spot.label, onclick: () => look(current) },
       spot.text ? h('span', { class: 'spot-text' }, spot.text) : null,
       h('span', { class: 'spot-label' }, spot.label)));
   }
@@ -1214,6 +1213,8 @@ function refreshLies() {
   const flag = (key, text) => (state.evidence[key] ? `'${text}'` : 'NULL');
   gdb.exec('DROP VIEW IF EXISTS lies');
   gdb.exec(`CREATE VIEW lies AS
+-- 日向：毎晩22時に確かめる。書き換えられた記録が元に戻っていたら、このビューを作る。
+-- 直っていない行は空のまま。全部埋まったら、それが本当のことだ。
 SELECT 1 AS no, CASE WHEN
   (SELECT COUNT(*) FROM access_log WHERE resident_id = 12 AND logged_at LIKE '2026-09-07 23:12%') = 1
   AND (SELECT COUNT(*) FROM staff_access_log WHERE staff_id = 2 AND logged_at LIKE '2026-09-07 23:41%') = 1
@@ -1234,19 +1235,11 @@ SELECT 4, CASE WHEN EXISTS (
 async function playFinale(n) {
   const { finale } = S.CHAPTERS[n];
   state.scene = 'room';
-  showRoom(S.CHAPTERS[n].room);
+  showRoom(finale.room ?? S.CHAPTERS[n].room);
   const stage = app.querySelector('.stage');
   // showRoom はクリア後の状態で描くので、いったん元に戻してから動かす
   stage.querySelectorAll('.opened').forEach((el) => el.classList.remove('opened'));
-  const appearing = finale.appear ? [...stage.querySelectorAll('[data-appear]')] : [];
-  appearing.forEach((el) => el.classList.add('pre-appear'));
   await sleep(600);
-  if (appearing.length) {
-    setTimeout(() => {
-      appearing.forEach((el) => el.classList.remove('pre-appear'));
-      sfx.appear();
-    }, 2600);
-  }
   const lines = [...finale.lines];
   if (finale.open) {
     await talk(lines.slice(0, -1));
