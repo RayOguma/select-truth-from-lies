@@ -1,6 +1,6 @@
-import { h, sleep } from './dom.js';
+import { h, fill, sleep } from './dom.js';
 import { initSql, GameDb } from './db.js';
-import { createTerminal } from './terminal.js';
+import { createTerminal, MAX_ROWS } from './terminal.js';
 import * as S from './story.js';
 import { sfx, unlock } from './sound.js';
 import { settings, updateSettings, applySettings, charDelay, TEXT_SIZES, TEXT_SPEEDS } from './settings.js';
@@ -54,6 +54,7 @@ function save() {
   } catch (e) {
     console.warn('セーブに失敗しました', e);
   }
+  updateTodo();
 }
 
 function takeSnapshot() {
@@ -103,6 +104,7 @@ function talk(lines) {
 
     function show() {
       const line = lines[index];
+      pushLog(line.who ?? '', line.text);
       who.textContent = line.who ?? '';
       who.classList.toggle('empty', !line.who);
       next.classList.add('hidden');
@@ -130,10 +132,12 @@ function talk(lines) {
       if (index < lines.length) return show();
       layer.remove();
       document.removeEventListener('keydown', onKey);
+      save();
       resolve();
     }
 
     function onKey(e) {
+      if (document.querySelector('.modal-layer.top')) return;
       if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault();
         advance();
@@ -181,7 +185,8 @@ function readPaper(paper) {
   return showPaper(title, lines);
 }
 
-function showNotebook() {
+// startTitle を渡すと、そのページから開く
+function showNotebook(startTitle = null) {
   return new Promise((resolve) => {
     let page = 0;
     const body = h('div', { class: 'nb-page' });
@@ -220,7 +225,7 @@ function showNotebook() {
       else if (e.key === 'ArrowLeft') go(page - 1);
     }
     document.addEventListener('keydown', onKey);
-    go(0);
+    go(Math.max(0, S.NOTEBOOK.findIndex((p) => p.title === startTitle)));
   });
 }
 
@@ -275,6 +280,7 @@ async function newGame(name) {
   }
   gdb.exec('UPDATE staff SET name = ? WHERE staff_id = 5', [name]);
   state = newState(name);
+  refreshHint();
   takeSnapshot();
   save();
   await playPrologue();
@@ -291,6 +297,7 @@ function continueGame() {
   }
   state.reported ??= {};
   state.evidence ??= {};
+  if (!gdb.inTransaction()) refreshHint();
   // 持ち物がなかった頃のセーブは、進み具合から持っているはずの物を補う
   if (!state.items) {
     state.items = [];
@@ -450,7 +457,8 @@ function showItems() {
   if (!state) return;
   const list = state.items.map((id) => {
     const item = S.ITEMS[id];
-    return h('button', { class: 'item-card', onclick: () => useItem(id) },
+    // 中身を開くときは、持ち物の一覧を閉じてから開く
+    return h('button', { class: 'item-card', onclick: () => { m.close(); useItem(id); } },
       h('span', { class: `item-icon item-${id}` }),
       h('span', { class: 'item-text' },
         h('span', { class: 'item-name' }, item.name),
@@ -510,13 +518,19 @@ function showPC() {
 function showDesktop() {
   const icons = h('div', { class: 'icons' });
   const windows = h('div', { class: 'windows' });
-  const toast = h('div', { class: 'toast hidden', role: 'status' });
+  const toast = h('div', { class: 'toast hidden', role: 'status', onclick: () => toastDismiss?.() });
   const clock = h('span', { class: 'clock' });
   app.replaceChildren(h('div', { class: 'scene pc desktop' },
     exitButton(), icons, windows, toast,
     h('div', { class: 'taskbar' }, h('span', {}, 'hinata'), clock),
   ));
   desk = { icons, windows, toast, open: new Map(), z: 10, mail: null };
+  // 閉じる前にPCを離れた気づきは、戻ってきたときに出し直す
+  if (toastShowing) toastQueue.unshift(toastShowing);
+  toastBusy = false;
+  toastDismiss = null;
+  toastShowing = null;
+  if (toastQueue.length) setTimeout(nextToast, 800);
   const tick = () => {
     if (!clock.isConnected) return;
     clock.textContent = `2026/09/28　${nowHm()}`;
@@ -564,14 +578,32 @@ function openApp(id) {
   if (id === 'memo') return openWindow('memo', '日向のメモ.txt - メモ帳', h('pre', { class: 'memo' }, S.MEMO_TXT), { w: 480, h: 300 });
   if (id === 'notebook') return showNotebook();
   if (id === 'terminal') {
+    const firstTime = !state.flags.terminalSeen;
     state.flags.terminalSeen = true;
     save();
     renderIcons();
-    return openWindow('terminal', 'ターミナル — sqlite3 hidamari.db', buildTerminal(), {
+    const win = openWindow('terminal', 'ターミナル — sqlite3 hidamari.db', buildTerminal(), {
       w: 820, h: 500,
       tools: [h('button', { class: 'win-tool', onclick: resetChapter }, '章の最初に戻す')],
     });
+    if (firstTime) setTimeout(() => showHintGuide(win), 50);
+    return win;
   }
+}
+
+// 初めてターミナルを開いたときに、hint テーブルの使い方を説明する
+function showHintGuide(win) {
+  const m = modal(
+    h('div', { class: 'hints' },
+      h('h3', {}, 'ヒントの見方'),
+      h('p', {}, '困ったときは、ターミナルでこう入力してください。'),
+      h('pre', { class: 'code' }, 'SELECT * FROM hint;'),
+      h('p', {}, 'いま調べていることのヒントが出ます。実行するたびに、ヒントが1段階ずつ詳しくなります（3段階目は、ほぼ答えです）。'),
+      h('p', { class: 'hint-note' }, 'メールの「桐山に相談」でも、同じヒントを聞けます。聞かなくても進められるので、困ったときだけどうぞ。'),
+      h('div', { class: 'hint-buttons' }, h('button', { class: 'btn small', onclick: () => m.close() }, 'わかった')),
+    ),
+    { className: 'modal-hints', onClose: () => win.querySelector('.term-input')?.focus() },
+  );
 }
 
 function openWindow(id, title, content, { w = 560, h: height = 400, tools = [] } = {}) {
@@ -632,29 +664,106 @@ function makeDraggable(handle, win) {
 // 吹き出しは順番に1つずつ出す（同時に出ると前のものが読めないため）
 const toastQueue = [];
 let toastBusy = false;
+let toastDismiss = null;
+let toastShowing = null;  // 表示中で、まだ閉じていない気づき
+let toastFocused = false;  // 列を囲んでスクロールしたか（全部閉じたら入力欄まで戻す）
+let terminal = null;
 
-function showToast(text, kind = '') {
+// focus（列名）/ focusRow（行に含まれる文字）を渡すと、気づきが出ているあいだ、ターミナルのその列・行を枠で囲む
+// then を渡すと、気づきを閉じたあとにその場面（S.SCENES）を流す
+function showToast(text, kind = '', { focus = null, focusRow = null, then = null } = {}) {
   if (!desk) return;
-  toastQueue.push({ text, kind });
+  toastQueue.push({ text, kind, focus, focusRow, then });
   if (!toastBusy) nextToast();
 }
 
+// メールの通知は自動で消える。気づき（monologue）は、クリックか Space / Esc で閉じるまで残す
 function nextToast() {
+  toastDismiss = null;
+  toastShowing = null;
   const item = toastQueue.shift();
   if (!item || !desk) {
     toastBusy = false;
-    toastQueue.length = 0;
+    if (terminal?.el.isConnected && toastFocused) terminal.scrollToBottom();
+    toastFocused = false;
     return;
   }
   toastBusy = true;
   const { toast } = desk;
-  toast.textContent = item.text;
+  const monologue = item.kind === 'monologue';
+  fill(toast,
+    monologue ? h('span', { class: 'toast-label' }, '気づき') : null,
+    h('span', { class: 'toast-text' }, item.text),
+    monologue ? h('span', { class: 'toast-close' }, 'クリック / Space で閉じる') : null,
+  );
   toast.className = `toast ${item.kind}`;
-  if (item.kind === 'monologue') sfx.monologue();
-  setTimeout(() => {
+  let done = false;
+  const live = terminal?.el.isConnected;
+  const unfocus = (live && item.focus && terminal.focusColumn(item.focus))
+    || (live && item.focusRow && terminal.focusRow(item.focusRow))
+    || (() => {});
+  if (item.focus || item.focusRow) toastFocused = true;
+  const dismiss = () => {
+    if (done || toast !== desk?.toast) return;
+    done = true;
+    unfocus();
+    toastDismiss = null;
+    toastShowing = null;
     toast.classList.add('hidden');
-    setTimeout(nextToast, 500);
-  }, 4500);
+    if (item.then) {
+      toastBusy = true;
+      setTimeout(async () => {
+        await playScene(item.then);
+        nextToast();
+      }, 400);
+    } else {
+      setTimeout(nextToast, 400);
+    }
+  };
+  if (monologue) {
+    pushLog('気づき', item.text, 'monologue');
+    sfx.monologue();
+    toastDismiss = dismiss;
+    toastShowing = item;
+  } else {
+    setTimeout(dismiss, 4500);
+  }
+}
+
+document.addEventListener('keydown', (e) => {
+  if (!toastDismiss || e.isComposing || document.querySelector('.dialog-layer')) return;
+  const typing = e.target.matches?.('input, textarea') && e.target.value !== '';
+  if (e.key === 'Escape' || (e.key === ' ' && !typing)) {
+    e.preventDefault();
+    toastDismiss();
+  }
+});
+
+// 主人公がノートを見ながら、ターミナルでSQLを打ってみせる場面
+// 場面は手順の並び。say: セリフ / notebook: ノートをそのページで開く / type: SQLを打って実行する
+// focus（列名）を付けた say は、その列を枠で囲みながら話す
+async function playScene(id) {
+  if (!terminal?.el.isConnected) openApp('terminal');
+  for (const step of S.SCENES[id]) {
+    if (step.notebook) {
+      if (!state.items.includes('notebook')) {
+        state.items.push('notebook');
+        save();
+        updateItemBadge();
+        await talk([{ text: '本棚から、日向さんのノートを取ってきた。' }]);
+      }
+      await showNotebook(step.notebook);
+    } else if (step.type) {
+      await terminal.autoType(step.type);
+      await sleep(900);
+    } else if (step.say) {
+      const unfocus = step.focus ? terminal.focusColumn(step.focus) : () => {};
+      await talk(step.say);
+      unfocus();
+    }
+  }
+  terminal.scrollToBottom();
+  terminal.focus();
 }
 
 // ---- メール ----
@@ -688,7 +797,7 @@ function buildMail() {
     const firstRead = !state.read.includes(id);
     if (firstRead) state.read.push(id);
     const report = m.report ? S.REPORTS[m.report] : null;
-    view.replaceChildren(
+    fill(view,
       h('div', { class: 'mail-head' },
         h('div', { class: 'mail-subject-big' }, m.subject),
         h('div', { class: 'mail-meta' }, `差出人：${m.from}　${mailTime(id)}`)),
@@ -799,7 +908,7 @@ function showHints() {
   const m = modal(body, { className: 'modal-hints' });
   function render() {
     const level = state.hints[n] ?? 0;
-    body.replaceChildren(
+    fill(body,
       h('h3', {}, '桐山に相談'),
       state.solved[n] ? h('p', {}, '今は大丈夫です。次の連絡を待っていてください。') : null,
       hints.slice(0, level).map((text, i) => h('div', { class: 'hint' }, h('span', { class: 'hint-step' }, i + 1), h('span', {}, text))),
@@ -818,14 +927,21 @@ function showHints() {
 
 function buildTerminal() {
   const term = createTerminal({
+    columnNote: (name) => S.COLUMN_NOTES[name],
     onRun: (text) => {
       if (state.chapter >= 9 && !gdb.inTransaction()) refreshLies();
+      if (!text.trim().startsWith('.') && /\bSELECT\b[\s\S]*\bhint\b/i.test(text)) refreshHint(true);
       const { outputs, statements } = gdb.run(text);
+      // 気づきは、画面に表示された行だけを見て判定する（表示しきれなかった行には気づけない）
+      const visible = outputs.map((o) => (o.type === 'table'
+        ? { ...o, values: o.values.slice(0, MAX_ROWS), truncated: o.values.length > MAX_ROWS }
+        : o));
       for (const mono of S.MONOLOGUES) {
         if (mono.chapter && mono.chapter !== state.chapter) continue;
-        if (!state.monologues.includes(mono.id) && mono.when(outputs)) {
+        if (mono.after && !state.monologues.includes(mono.after)) continue;
+        if (!state.monologues.includes(mono.id) && mono.when(visible)) {
           state.monologues.push(mono.id);
-          setTimeout(() => showToast(mono.text, 'monologue'), 700);
+          setTimeout(() => showToast(mono.text, 'monologue', mono), 700);
         }
       }
       for (const st of statements) {
@@ -839,6 +955,7 @@ function buildTerminal() {
     },
   });
   setTimeout(() => term.focus(), 0);
+  terminal = term;
   return term.el;
 }
 
@@ -892,6 +1009,21 @@ function checkResultGoal(outputs, sql) {
   } else if (n === 9) {
     setTimeout(() => showEnding(), 3500);
   }
+}
+
+// ヒントの表。hint を読むたびに1段階ずつ詳しくなる。段階は「桐山に相談」と共通
+function refreshHint(step = false) {
+  const n = state.chapter;
+  const hints = S.HINTS[n] ?? [];
+  if (step && !state.solved[n] && (state.hints[n] ?? 0) < hints.length) {
+    state.hints[n] = (state.hints[n] ?? 0) + 1;
+  }
+  const rows = state.solved[n]
+    ? [[0, '今は大丈夫です。次の連絡を待っていてください。']]
+    : hints.slice(0, state.hints[n] ?? 0).map((text, i) => [i + 1, text]);
+  gdb.exec('CREATE TABLE IF NOT EXISTS hint (level INTEGER, hint TEXT)');
+  gdb.exec('DELETE FROM hint');
+  for (const row of rows) gdb.exec('INSERT INTO hint VALUES (?, ?)', row);
 }
 
 // 集めた証拠をまとめたビュー。DBの状態で決まる証拠と、報告で確保した証拠を合わせる
@@ -1102,6 +1234,78 @@ document.body.append(menuButton);
 const itemButton = h('button', { class: 'item-btn hidden', 'aria-label': '持ち物', onclick: () => showItems() }, '持ち物');
 document.body.append(itemButton);
 
+const logButton = h('button', { class: 'item-btn log-btn hidden', 'aria-label': 'セリフのログ', onclick: () => showLog() }, 'ログ');
+document.body.append(logButton);
+
+// ---- セリフのログ ----
+
+const LOG_MAX = 500;
+
+function pushLog(who, text, kind = '') {
+  if (!state) return;
+  state.log ??= [];
+  state.log.push({ who, text, kind });
+  if (state.log.length > LOG_MAX) state.log.splice(0, state.log.length - LOG_MAX);
+}
+
+function showLog() {
+  if (!state) return;
+  const entries = (state.log ?? []).map((e) => h('div', { class: `log-entry ${e.kind}` },
+    e.who ? h('span', { class: 'log-who' }, e.who) : null,
+    h('span', { class: 'log-text' }, e.text)));
+  const list = h('div', { class: 'log-list' }, entries.length ? entries : h('p', { class: 'menu-note' }, 'まだ何もない。'));
+  const m = modal(h('div', { class: 'menu-panel log-panel' },
+    h('h3', {}, 'ログ'),
+    list,
+    h('button', { class: 'btn ghost', onclick: () => m.close() }, '閉じる'),
+  ), { top: true });
+  list.scrollTop = list.scrollHeight;
+}
+
+// ---- 今やること ----
+
+// 左下に、今やることを出す。クリックで畳める
+const todoBox = h('button', {
+  class: 'todo hidden',
+  'aria-label': '今やること',
+  onclick: () => {
+    state.flags.todoFolded = !state.flags.todoFolded;
+    save();
+  },
+});
+document.body.append(todoBox);
+
+function todoLines() {
+  if (!state || state.scene === 'prologue') return null;
+  const n = state.chapter;
+  const chapter = S.CHAPTERS[n];
+  if (!state.loggedIn) {
+    return ['管理人室のパソコンにログインしよう', state.items.includes('techo') ? '手帳に、パスワードのヒントがある' : 'パスワードの手がかりを、管理人室で探す'];
+  }
+  if (state.pendingIntro === n && !(state.scene === 'room' && state.room === chapter.room)) {
+    if (state.room === chapter.room) return ['パソコンから離れて、周りを見てみよう', '左上の「周りを調べる」から'];
+    return [`${S.ROOMS[chapter.room].name}へ行こう`, state.scene === 'pc' ? '「周りを調べる」から「移動」で行ける' : '右上の「移動」から行ける'];
+  }
+  if (state.inbox.some((id) => !state.read.includes(id))) return ['新しいメールを読もう', 'パソコンの「メール」から'];
+  if (state.solved[n]) return null;
+  const todo = S.TODOS[n];
+  return [todo.main, typeof todo.sub === 'function' ? todo.sub(state.items) : todo.sub];
+}
+
+function updateTodo() {
+  const lines = menuButton.classList.contains('hidden') ? null : todoLines();
+  todoBox.classList.toggle('hidden', !lines);
+  if (!lines) return;
+  const folded = Boolean(state.flags.todoFolded);
+  todoBox.classList.toggle('folded', folded);
+  todoBox.title = folded ? 'クリックで開く' : 'クリックで畳む';
+  fill(todoBox,
+    h('span', { class: 'todo-head' }, folded ? '今やること ▸' : '今やること ▾'),
+    folded ? null : h('span', { class: 'todo-main' }, lines[0]),
+    folded || !lines[1] ? null : h('span', { class: 'todo-sub' }, lines[1]),
+  );
+}
+
 // ---- はじめての案内 ----
 
 // ボタンを光らせて、吹き出しで使い方を一度だけ伝える。ボタンか吹き出しを押すと消え、二度と出ない
@@ -1137,7 +1341,9 @@ function setMenu(visible) {
   clearGuides();
   menuButton.classList.toggle('hidden', !visible);
   itemButton.classList.toggle('hidden', !visible);
+  logButton.classList.toggle('hidden', !visible);
   if (visible) updateItemBadge();
+  updateTodo();
 }
 
 function openMenu() {

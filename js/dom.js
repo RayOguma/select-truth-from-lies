@@ -10,11 +10,20 @@ export function h(tag, props = {}, ...children) {
     else if (key.startsWith('on')) el.addEventListener(key.slice(2), value);
     else el.setAttribute(key, value === true ? '' : value);
   }
-  for (const child of children.flat()) {
-    if (child === null || child === undefined || child === false) continue;
-    el.append(child instanceof Node ? child : String(child));
-  }
+  el.append(...nodes(children));
   return el;
+}
+
+// 中身を入れ替える。h() と同じく、null・false は飛ばし、配列は展開する
+// （標準の replaceChildren は null を "null" という文字にしてしまう）
+export function fill(el, ...children) {
+  el.replaceChildren(...nodes(children));
+}
+
+function nodes(children) {
+  return children.flat(Infinity)
+    .filter((child) => child !== null && child !== undefined && child !== false)
+    .map((child) => (child instanceof Node ? child : String(child)));
 }
 
 export function escapeHtml(text) {

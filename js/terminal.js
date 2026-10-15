@@ -5,9 +5,9 @@ import { sfx } from './sound.js';
 
 const PROMPT = 'sqlite> ';
 const CONTINUE = '   ...> ';
-const MAX_ROWS = 200;
+export const MAX_ROWS = 200;
 
-export function createTerminal({ onRun }) {
+export function createTerminal({ onRun, columnNote = () => null }) {
   const out = h('div', { class: 'term-out' });
   const prompt = h('span', { class: 'term-prompt' }, PROMPT);
   const input = h('textarea', {
@@ -22,7 +22,7 @@ export function createTerminal({ onRun }) {
   const history = [];
   let historyIndex = 0;
 
-  out.append(h('pre', { class: 'term-text' }, 'SQLite version 3.49.1\nEnter ".help" for usage hints.'));
+  out.append(h('pre', { class: 'term-text' }, 'SQLite version 3.49.1\nEnter ".help" for usage hints.\n困ったときは SELECT * FROM hint; （実行するたびに詳しくなります）'));
 
   function resize() {
     input.style.height = 'auto';
@@ -98,7 +98,10 @@ export function createTerminal({ onRun }) {
     const { columns, values } = output;
     const shown = values.slice(0, MAX_ROWS);
     const table = h('table', { class: 'term-table' },
-      h('thead', {}, h('tr', {}, columns.map((c) => h('th', {}, c)))),
+      h('thead', {}, h('tr', {}, columns.map((c) => {
+        const note = columnNote(c);
+        return h('th', { title: note ? `${c}：${note}` : null, class: note ? 'has-note' : null }, c);
+      }))),
       h('tbody', {}, shown.map((row) => h('tr', {}, row.map((v) => (v === null ? h('td', { class: 'null' }, 'NULL') : h('td', {}, v)))))),
     );
     const wrap = h('div', { class: 'term-result' }, table);
@@ -112,8 +115,73 @@ export function createTerminal({ onRun }) {
     root.scrollTop = root.scrollHeight;
   }
 
+  // いちばん新しい結果の中から、その列を探して枠で囲み、見出しが見えるところまで戻す。
+  // 返す関数で枠を外す
+  function focusColumn(name) {
+    const tables = [...out.querySelectorAll('.term-table')].reverse();
+    for (const table of tables) {
+      const index = [...table.querySelectorAll('th')].findIndex((th) => th.textContent === name);
+      if (index < 0) continue;
+      const cells = [...table.rows].map((row) => row.cells[index]).filter(Boolean);
+      cells.forEach((cell) => cell.classList.add('col-focus'));
+      cells[0].classList.add('col-focus-top');
+      cells[cells.length - 1].classList.add('col-focus-bottom');
+      const th = cells[0];
+      const rootRect = root.getBoundingClientRect();
+      root.scrollTo({ top: root.scrollTop + th.getBoundingClientRect().top - rootRect.top - 12, behavior: 'smooth' });
+      const wrap = table.closest('.term-result');
+      if (wrap.scrollWidth > wrap.clientWidth) {
+        const wrapRect = wrap.getBoundingClientRect();
+        const thRect = th.getBoundingClientRect();
+        wrap.scrollTo({ left: wrap.scrollLeft + thRect.left - wrapRect.left - (wrapRect.width - thRect.width) / 2, behavior: 'smooth' });
+      }
+      return () => cells.forEach((cell) => cell.classList.remove('col-focus', 'col-focus-top', 'col-focus-bottom'));
+    }
+    return () => {};
+  }
+
+  // いちばん新しい結果の中から、text を含む行を探して枠で囲み、画面の真ん中まで動かす。
+  // 返す関数で枠を外す
+  function focusRow(text) {
+    const rows = [...out.querySelectorAll('.term-table tbody tr')].reverse();
+    const row = rows.find((tr) => [...tr.cells].some((td) => td.textContent.includes(text)));
+    if (!row) return () => {};
+    row.classList.add('row-focus');
+    const rootRect = root.getBoundingClientRect();
+    const rowRect = row.getBoundingClientRect();
+    root.scrollTo({ top: root.scrollTop + rowRect.top - rootRect.top - (rootRect.height - rowRect.height) / 2, behavior: 'smooth' });
+    return () => row.classList.remove('row-focus');
+  }
+
+  // 主人公が打つところを見せる。1文字ずつ入力して、最後に実行する
+  function autoType(text, delay = 45) {
+    input.readOnly = true;
+    input.value = '';
+    return new Promise((resolve) => {
+      let n = 0;
+      const timer = setInterval(() => {
+        n++;
+        input.value = text.slice(0, n);
+        resize();
+        if (text[n - 1] !== '\n') sfx.key();
+        if (n < text.length) return;
+        clearInterval(timer);
+        setTimeout(() => {
+          input.readOnly = false;
+          sfx.enter();
+          submit();
+          resolve();
+        }, 400);
+      }, delay);
+    });
+  }
+
   return {
     el: root,
     focus: () => input.focus(),
+    focusColumn,
+    focusRow,
+    autoType,
+    scrollToBottom: () => root.scrollTo({ top: root.scrollHeight, behavior: 'smooth' }),
   };
 }

@@ -113,6 +113,8 @@ export class GameDb {
             '.help              この一覧を表示する',
             '.schema ?TABLE?    テーブルの定義を表示する',
             '.tables            テーブルの一覧を表示する',
+            '',
+            'SELECT * FROM hint;  ヒントを表示する（実行するたびに詳しくなる）',
           ].join('\n'),
         }];
       default:
