@@ -231,18 +231,21 @@ export const CHAPTERS = {
   },
 };
 
-// 左下に出す「今やること」。章の目的と、その補足（items に応じて変わるものは関数）
+// 左下に出す「今やること」。章の目的と、その補足（進み具合で変わるものは、state を受け取る関数）
 export const TODOS = {
   1: { main: '205号室が名簿でどうなっているか調べよう', sub: '誰が登録したのかも。分かったらメールで報告' },
   2: {
     main: '佐伯さんが最後に建物を出た時刻を調べよう',
-    sub: (items) => (items.includes('notice')
+    sub: (st) => (st.items.includes('notice')
       ? '佐伯さんの住人番号で、入退室の記録を調べる'
       : 'エントランスに、佐伯さんの手がかりがないか見てみる'),
   },
   3: { main: '入退室の記録と名簿を突き合わせよう', sub: '記録にいて名簿にいない番号と、記録が1件もない住人の数' },
   4: { main: '書き換えられた入退室の記録を、元に戻そう', sub: '日向さんが残した仕組みを探す' },
-  5: { main: '架空の住人を、名簿から外そう', sub: '本当に住んでいる人は消さないように' },
+  5: {
+    main: (st) => (st.flags.ghostsConfirmed ? '架空の住人8人を、名簿から外そう' : '架空の住人が誰なのか、確かめよう'),
+    sub: (st) => (st.flags.ghostsConfirmed ? '本当に住んでいる人は消さないように' : '名簿にいるのに、部屋は空室になっている人を探す'),
+  },
   6: { main: '家賃補助の振込先を調べよう', sub: '正規の管理口座 1182034 以外の口座を探す' },
   7: { main: '消された佐伯さんの行を探して、名簿に戻そう', sub: '戻すのは佐伯さんだけ' },
   8: { main: '犯人の名前を1つだけ返すクエリを書こう', sub: '名前を直接書くのはなし' },
@@ -701,7 +704,15 @@ SQLという命令を打ち込んで、記録を調べていました。
 架空の住人が名簿に残っていると、また申請されてしまいます。
 その前に、名簿から外してもらえますか。
 
-ただ、本当に住んでいる方は、絶対に消さないでください。
+オーナーには、台帳も見てもらいました。
+5階の6部屋と、4階の401・406は、ずっと空室だそうです。
+鍵も、誰にも渡したことがないと。
+空室かどうかは、管理システムの部屋の一覧にも入れてあるそうです。
+
+名簿では住んでいることになっているのに、部屋は空室になっている。
+そういう人が本当にいるのか、外す前に一度確かめて、教えてください。
+
+本当に住んでいる方は、絶対に消さないでください。
 
 それと、分かればでいいのですが、
 外した人たちを誰が登録していたのかも教えてください。
@@ -941,9 +952,9 @@ export const HINTS = {
     "SELECT * FROM audit_log WHERE table_name = 'access_log'; で書き換えを探して、UPDATE access_log SET logged_at = '（old_value の値）' WHERE log_id = （record_id の値）; です。",
   ],
   5: [
-    '本当に住んでいる人と、架空の人を見分ける必要があります。出入りの記録のほかに、入居日や部屋の階にも、何か癖がないか見てみてください。',
-    '消す前に、同じ条件で SELECT して、消える行を確かめてください。記録が1件もない人の中には、入院中の西川さんも、205の「不明」もいます。',
-    "DELETE FROM residents WHERE resident_id NOT IN (SELECT resident_id FROM access_log) AND moved_in_on LIKE '%-01'; です。先に SELECT * で同じ条件を確かめてから。",
+    '外す前に、その人たちが本当に住んでいないか確かめたいです。空室かどうかは、管理システムの部屋の一覧（rooms）に入っているそうです。',
+    "名簿（residents）と部屋の一覧（rooms）を、部屋番号でつなげてみてください。名簿にいるのに、部屋は空室（status が 'vacant'）になっている人が、架空の住人です。記録が1件もない人の中には、入院中の西川さんも、205の「不明」もいるので、記録だけで決めないでください。",
+    "SELECT r.* FROM residents r JOIN rooms ro ON ro.room_no = r.room_no WHERE ro.status = 'vacant'; で8人を確かめてから、DELETE FROM residents WHERE room_no IN (SELECT room_no FROM rooms WHERE status = 'vacant'); です。",
   ],
   6: [
     '入金の記録は rent_payments にあるはずです。振込先の口座ごとにまとめてみると、何か見えるかもしれません。日向さんのノートの「まとめる」のページが使えそうです。',
@@ -971,6 +982,13 @@ export const HINTS = {
 const cellsOf = (outputs) => outputs.filter((o) => o.type === 'table').flatMap((o) => o.values.flat());
 const anyCell = (outputs, test) => cellsOf(outputs).some((v) => typeof v === 'string' && test(v));
 const hasColumns = (outputs, ...names) => outputs.some((o) => o.type === 'table' && names.every((n) => o.columns.includes(n)));
+
+// 架空の住人8人（部屋の一覧では、どの部屋も空室）と、名簿に載っている全員
+const GHOST_NAMES = ['高橋 誠', '吉田 浩', '山口 明', '斎藤 学', '井上 実', '木村 茂', '林 清', '清水 豊'];
+const ALL_RESIDENTS = [
+  '田村 和夫', '西川 フミ', '岡本 直樹', '藤井 美咲', '森下 敏行', '石原 加奈', '中野 浩二', '松井 由香',
+  '小川 達也', '上田 沙織', '青木 健太', '原 智子', '菊地 大輔', '金子 真理', '新井 翔太', '不明', ...GHOST_NAMES,
+];
 
 // 出入りの記録がある、本物の住人（この人たちが混ざった結果は、まだ絞り込めていない）
 const REAL_WITH_LOGS = ['田村 和夫', '岡本 直樹', '藤井 美咲', '森下 敏行', '石原 加奈'];
@@ -1095,6 +1113,20 @@ export const MONOLOGUES = [
     text: '同じ朝に、同じ人がもう1件、書き換えている……？',
   },
   {
+    id: 'ghostsConfirmed',
+    chapter: 5,
+    focus: 'status',
+    when: (outputs, sql) => {
+      const names = cellsOf(outputs).filter((v) => ALL_RESIDENTS.includes(v));
+      const exact = GHOST_NAMES.every((n) => names.includes(n)) && names.every((n) => GHOST_NAMES.includes(n));
+      const vacantShown = outputs.some((o) => o.type === 'table' && o.columns.includes('status')
+        && o.values.length && o.values.every((row) => row[o.columns.indexOf('status')] === 'vacant'));
+      return exact && (vacantShown || (/\brooms\b/i.test(sql) && /vacant/i.test(sql)));
+    },
+    text: '名簿では住んでいることになっているのに、部屋は空室。……ちょうど8人だ。',
+    then: 'ghostsConfirmed',
+  },
+  {
     id: 'ghostDates',
     chapter: 5,
     when: (outputs) => {
@@ -1181,6 +1213,25 @@ WHERE r.room_no = '101';`,
         { text: "WHERE の '101' を変えれば、ほかの部屋も同じように調べられるはずだ。" },
       ],
     },
+  ],
+  // 第5章：空室の部屋にいる8人を出したら、桐山さんに電話して、架空の住人だと確かめる
+  ghostsConfirmed: [
+    {
+      // 5階の廊下に行ったあと（着いたときの地の文が流れたあと）だけ
+      if: (st) => st.chapter === 5 && st.pendingIntro !== 5,
+      say: [{ text: '5階のドアは、どれも表札がなかった。ドアノブには埃が積もっていて、人が出入りしている様子もなかった。' }],
+    },
+    {
+      say: [
+        { text: '出入りの記録も、この8人は1件もない。' },
+        { text: '桐山さんに電話をかけて、8人の部屋番号を読み上げた。' },
+        { who: '桐山（電話）', text: '……501から506、それに401と406。オーナーの台帳の空室と、ぴったり同じです。' },
+        { who: '桐山（電話）', text: '鍵を渡したこともない部屋に、住んでいる人はいません。その8人は、架空の住人です。' },
+        { who: '桐山（電話）', text: '名簿から外してください。……本当に住んでいる方は、そのままで。' },
+        { text: '電話が切れた。同じ条件で、この8人だけを名簿から外せばいい。' },
+      ],
+    },
+    { flag: 'ghostsConfirmed' },
   ],
   // 出入りの記録を全部出したら、表示しきれなかったとき
   sortLesson: [

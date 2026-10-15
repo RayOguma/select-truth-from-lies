@@ -722,7 +722,8 @@ button { font: inherit; }
   line-height: 1.3em;
 }
 
-.windows { position: absolute; inset: 0 0 2.2rem 0; pointer-events: none; }
+/* 上のボタン（持ち物・ログ・周りを調べる・メニュー）とタスクバーにかからない範囲に置く */
+.windows { position: absolute; inset: 3.2rem 0 2.2rem 0; pointer-events: none; }
 .win {
   position: absolute;
   display: flex;
@@ -768,12 +769,42 @@ button { font: inherit; }
   cursor: pointer;
 }
 .win-close:hover { background: #a33; color: #fff; }
+.win-min {
+  width: 1.8rem;
+  height: 1.6rem;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+.win-min:hover { background: var(--panel); color: var(--text); }
 .win-body { flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
+.win.minimized { display: none; }
+
+/* 右端・下端・右下の角をドラッグして大きさを変える */
+.win-resize { position: absolute; z-index: 2; touch-action: none; }
+.win-resize-e { top: 0; right: 0; bottom: 12px; width: 6px; cursor: ew-resize; }
+.win-resize-s { left: 0; right: 12px; bottom: 0; height: 6px; cursor: ns-resize; }
+.win-resize-se {
+  right: 0;
+  bottom: 0;
+  width: 14px;
+  height: 14px;
+  cursor: nwse-resize;
+  background: linear-gradient(135deg, transparent 50%, #5a6a8a 50% 58%, transparent 58% 70%, #5a6a8a 70% 78%, transparent 78%);
+}
+
+/* PCの中で開いたノート */
+.notebook.in-window { width: 100%; height: 100%; border-radius: 0; box-shadow: inset 10px 0 0 #e6dcc6; }
+.notebook.in-window .nb-page { padding: 1.2rem 1.4rem 1.2rem 2rem; }
 
 .taskbar {
   position: absolute;
   inset: auto 0 0 0;
   display: flex;
+  gap: 1rem;
   justify-content: space-between;
   height: 2.2rem;
   padding: 0 1rem;
@@ -1049,3 +1080,23 @@ button { font: inherit; }
 .term-table tr.row-focus td { background: rgba(127, 209, 185, 0.16); box-shadow: inset 0 2px 0 var(--accent), inset 0 -2px 0 var(--accent); color: #fff; }
 .term-table tr.row-focus td:first-child { box-shadow: inset 0 2px 0 var(--accent), inset 0 -2px 0 var(--accent), inset 2px 0 0 var(--accent); }
 .term-table tr.row-focus td:last-child { box-shadow: inset 0 2px 0 var(--accent), inset 0 -2px 0 var(--accent), inset -2px 0 0 var(--accent); }
+
+/* タスクバーに並ぶ、開いているウィンドウ */
+.tasks { flex: 1; display: flex; gap: 0.4rem; min-width: 0; overflow-x: auto; }
+.task {
+  flex: none;
+  max-width: 11rem;
+  padding: 0.2em 0.9em;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--muted);
+  font-size: 0.8rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.task:hover { color: var(--text); border-color: var(--accent); }
+.task.active { color: var(--text); border-color: var(--accent); background: rgba(127, 209, 185, 0.14); }
+.task.minimized { opacity: 0.6; border-style: dashed; }

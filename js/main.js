@@ -185,47 +185,52 @@ function readPaper(paper) {
   return showPaper(title, lines);
 }
 
-// startTitle を渡すと、そのページから開く
+// ノートの中身を作る。onClose は「閉じる」ボタン、onPage はページを変えたときに呼ぶ
+function buildNotebook({ startTitle = null, onClose, onPage } = {}) {
+  let page = 0;
+  const body = h('div', { class: 'nb-page' });
+  const pageNo = h('span', { class: 'nb-pageno' });
+  const prev = h('button', { class: 'btn small', onclick: () => go(page - 1) }, '← 前');
+  const next = h('button', { class: 'btn small', onclick: () => go(page + 1) }, '次 →');
+  const el = h('div', { class: 'notebook' },
+    body,
+    h('div', { class: 'nb-nav' }, prev, pageNo, next, h('button', { class: 'btn small ghost', onclick: () => onClose?.() }, '閉じる')),
+  );
+
+  function go(p, silent = false) {
+    const nextPage = Math.max(0, Math.min(S.NOTEBOOK.length - 1, p));
+    if (nextPage !== page && !silent) sfx.page();
+    page = nextPage;
+    const current = S.NOTEBOOK[page];
+    body.innerHTML = current.html;
+    const toc = body.querySelector('.nb-toc');
+    if (toc) {
+      S.NOTEBOOK.forEach((other, i) => {
+        if (i < 2) return;
+        toc.append(h('li', {}, h('a', { href: '#', onclick: (e) => { e.preventDefault(); go(i); } }, other.title)));
+      });
+    }
+    pageNo.textContent = `${page + 1} / ${S.NOTEBOOK.length}`;
+    prev.disabled = page === 0;
+    next.disabled = page === S.NOTEBOOK.length - 1;
+    body.scrollTop = 0;
+    onPage?.(current.title);
+  }
+
+  go(Math.max(0, S.NOTEBOOK.findIndex((p) => p.title === startTitle)), true);
+  return { el, step: (d) => go(page + d) };
+}
+
+// 全画面でノートを開く（部屋の画面や、主人公が説明する場面で使う）。startTitle を渡すと、そのページから開く
 function showNotebook(startTitle = null) {
   return new Promise((resolve) => {
-    let page = 0;
-    const body = h('div', { class: 'nb-page' });
-    const pageNo = h('span', { class: 'nb-pageno' });
-    const prev = h('button', { class: 'btn small', onclick: () => go(page - 1) }, '← 前');
-    const next = h('button', { class: 'btn small', onclick: () => go(page + 1) }, '次 →');
-    const m = modal(
-      h('div', { class: 'notebook' },
-        body,
-        h('div', { class: 'nb-nav' }, prev, pageNo, next, h('button', { class: 'btn small ghost', onclick: () => m.close() }, '閉じる')),
-      ),
-      { onClose: () => { document.removeEventListener('keydown', onKey); resolve(); }, className: 'modal-notebook' },
-    );
-
-    function go(p) {
-      const nextPage = Math.max(0, Math.min(S.NOTEBOOK.length - 1, p));
-      if (nextPage !== page) sfx.page();
-      page = nextPage;
-      const current = S.NOTEBOOK[page];
-      body.innerHTML = current.html;
-      const toc = body.querySelector('.nb-toc');
-      if (toc) {
-        S.NOTEBOOK.forEach((other, i) => {
-          if (i < 2) return;
-          toc.append(h('li', {}, h('a', { href: '#', onclick: (e) => { e.preventDefault(); go(i); } }, other.title)));
-        });
-      }
-      pageNo.textContent = `${page + 1} / ${S.NOTEBOOK.length}`;
-      prev.disabled = page === 0;
-      next.disabled = page === S.NOTEBOOK.length - 1;
-      body.scrollTop = 0;
-    }
-
+    const nb = buildNotebook({ startTitle, onClose: () => m.close() });
+    const m = modal(nb.el, { onClose: () => { document.removeEventListener('keydown', onKey); resolve(); }, className: 'modal-notebook' });
     function onKey(e) {
-      if (e.key === 'ArrowRight') go(page + 1);
-      else if (e.key === 'ArrowLeft') go(page - 1);
+      if (e.key === 'ArrowRight') nb.step(1);
+      else if (e.key === 'ArrowLeft') nb.step(-1);
     }
     document.addEventListener('keydown', onKey);
-    go(Math.max(0, S.NOTEBOOK.findIndex((p) => p.title === startTitle)));
   });
 }
 
@@ -233,6 +238,7 @@ function showNotebook(startTitle = null) {
 
 async function showTitle() {
   setMenu(false);
+  dropDesk();
   const typed = h('span', { class: 'title-text' });
   const sub = h('div', { class: 'title-sub hidden' },
     h('p', { class: 'tagline' }, S.TAGLINE),
@@ -337,8 +343,8 @@ async function playPrologue() {
 
 const pos = (r) => ({ left: `${r.x}%`, top: `${r.y}%`, width: `${r.w}%`, height: `${r.h}%` });
 
-// 行ったことのある場所（章の舞台になった部屋）。古いセーブにも対応するため、進んだ章から求める
-function visitedRooms() {
+// 移動できる場所（いまの章までに舞台になった部屋）。古いセーブにも対応するため、進んだ章から求める
+function reachableRooms() {
   const ids = [];
   for (let n = 1; n <= state.chapter; n++) {
     const id = S.CHAPTERS[n].room;
@@ -349,7 +355,7 @@ function visitedRooms() {
 
 // 部屋の見た目は、その部屋で起きた章（room.chapter）がクリア済みかどうかで決まる
 function showRoom(roomId = state.room ?? S.CHAPTERS[state.chapter].room) {
-  desk = null;
+  parkDesk();
   setMenu(true);
   state.scene = 'room';
   state.room = roomId;
@@ -379,7 +385,7 @@ function showRoom(roomId = state.room ?? S.CHAPTERS[state.chapter].room) {
       spot.text ? h('span', { class: 'spot-text' }, spot.text) : null,
       h('span', { class: 'spot-label' }, spot.label)));
   }
-  const others = visitedRooms().filter((id) => id !== roomId);
+  const others = reachableRooms().filter((id) => id !== roomId);
   app.replaceChildren(h('div', { class: 'scene room' },
     h('header', { class: 'room-header' },
       h('span', {}, room.name),
@@ -391,7 +397,7 @@ function showRoom(roomId = state.room ?? S.CHAPTERS[state.chapter].room) {
   const chapter = S.CHAPTERS[state.chapter];
   const guideMove = () => {
     const button = app.querySelector('.move-btn');
-    if (button) showGuide(button, 'guideMove', 'ここから、行ったことのある場所へ移動できます。');
+    if (button) showGuide(button, 'guideMove', 'ここから、別の場所へ移動できます。');
   };
   if (state.pendingIntro === state.chapter && roomId === chapter.room && chapter.intro) {
     state.pendingIntro = null;
@@ -449,7 +455,7 @@ async function gainItem(id) {
 
 function useItem(id) {
   const item = S.ITEMS[id];
-  if (item.notebook) return showNotebook();
+  if (item.notebook) return desk ? openApp('notebook') : showNotebook();
   return readPaper(item.paper);
 }
 
@@ -515,22 +521,51 @@ function showPC() {
   input.focus();
 }
 
+// PCを離れても、デスクトップ（開いていたウィンドウ、ターミナルの履歴など）はそのまま取っておく
+let parkedDesk = null;
+
+function parkDesk() {
+  if (!desk) return;
+  // 出ていた吹き出しは片付ける（気づきは、戻ってきたときに出し直す）
+  toastSeq++;
+  toastCleanup?.();
+  toastCleanup = null;
+  desk.toast.classList.add('hidden');
+  parkedDesk = desk;
+  desk = null;
+}
+
+function dropDesk() {
+  desk = null;
+  parkedDesk = null;
+}
+
 function showDesktop() {
-  const icons = h('div', { class: 'icons' });
-  const windows = h('div', { class: 'windows' });
-  const toast = h('div', { class: 'toast hidden', role: 'status', onclick: () => toastDismiss?.() });
-  const clock = h('span', { class: 'clock' });
-  app.replaceChildren(h('div', { class: 'scene pc desktop' },
-    exitButton(), icons, windows, toast,
-    h('div', { class: 'taskbar' }, h('span', {}, 'hinata'), clock),
-  ));
-  desk = { icons, windows, toast, open: new Map(), z: 10, mail: null };
+  if (parkedDesk) {
+    desk = parkedDesk;
+    parkedDesk = null;
+    app.replaceChildren(desk.scene);
+  } else {
+    const icons = h('div', { class: 'icons' });
+    const windows = h('div', { class: 'windows' });
+    const toast = h('div', { class: 'toast hidden', role: 'status', onclick: () => toastDismiss?.() });
+    const clock = h('span', { class: 'clock' });
+    const tasks = h('div', { class: 'tasks' });
+    const scene = h('div', { class: 'scene pc desktop' },
+      exitButton(), icons, windows, toast,
+      h('div', { class: 'taskbar' }, h('span', { class: 'taskbar-user' }, 'hinata'), tasks, clock),
+    );
+    desk = { scene, icons, windows, toast, clock, tasks, open: new Map(), z: 10, mail: null };
+    app.replaceChildren(scene);
+    restoreLayout();
+  }
   // 閉じる前にPCを離れた気づきは、戻ってきたときに出し直す
   if (toastShowing) toastQueue.unshift(toastShowing);
   toastBusy = false;
   toastDismiss = null;
   toastShowing = null;
   if (toastQueue.length) setTimeout(nextToast, 800);
+  const { clock } = desk;
   const tick = () => {
     if (!clock.isConnected) return;
     clock.textContent = `2026/09/28　${nowHm()}`;
@@ -538,6 +573,9 @@ function showDesktop() {
   };
   tick();
   renderIcons();
+  renderTaskbar();
+  desk.mail?.refresh();
+  if (desk.open.has('terminal') && !desk.open.get('terminal').classList.contains('minimized')) terminal?.focus();
   const chapter = S.CHAPTERS[state.chapter];
   const callFlag = `call${state.chapter}`;
   if (chapter.call && !state.flags[callFlag] && !state.solved[state.chapter]) {
@@ -575,20 +613,33 @@ function openApp(id) {
   const opened = desk.open.get(id);
   if (opened) return focusWindow(opened);
   if (id === 'mail') return openWindow('mail', 'メール', buildMail(), { w: 720, h: 460 });
-  if (id === 'memo') return openWindow('memo', '日向のメモ.txt - メモ帳', h('pre', { class: 'memo' }, S.MEMO_TXT), { w: 480, h: 300 });
-  if (id === 'notebook') return showNotebook();
+  if (id === 'memo') return openWindow('memo', '日向のメモ.txt - メモ帳', h('pre', { class: 'memo' }, S.MEMO_TXT), { w: 480, h: 300, label: 'メモ帳' });
+  if (id === 'notebook') {
+    // ターミナルと並べて読めるように、右側に開く
+    const nb = buildNotebook({
+      startTitle: state.notebookPage,
+      onClose: () => closeWindow('notebook'),
+      onPage: (title) => { state.notebookPage = title; },
+    });
+    nb.el.classList.add('in-window');
+    const w = Math.min(560, desk.windows.clientWidth - 40);
+    return openWindow('notebook', 'SQLノート — 日向', nb.el, {
+      w, h: Math.min(620, desk.windows.clientHeight - 40), x: Math.max(20, desk.windows.clientWidth - w - 20), y: 20, label: 'SQLノート',
+    });
+  }
   if (id === 'terminal') {
     const firstTime = !state.flags.terminalSeen;
     state.flags.terminalSeen = true;
     save();
     renderIcons();
     const win = openWindow('terminal', 'ターミナル — sqlite3 hidamari.db', buildTerminal(), {
-      w: 820, h: 500,
+      w: 820, h: 500, label: 'ターミナル',
       tools: [h('button', { class: 'win-tool', onclick: resetChapter }, '章の最初に戻す')],
     });
     if (firstTime) setTimeout(() => showHintGuide(win), 50);
     return win;
   }
+  return null;
 }
 
 // 初めてターミナルを開いたときに、hint テーブルの使い方を説明する
@@ -606,38 +657,127 @@ function showHintGuide(win) {
   );
 }
 
-function openWindow(id, title, content, { w = 560, h: height = 400, tools = [] } = {}) {
+const MIN_W = 320;
+const MIN_H = 180;
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(v, Math.max(lo, hi)));
+
+function openWindow(id, title, content, { w = 560, h: height = 400, x = null, y = null, tools = [], label = title } = {}) {
   const existing = desk.open.get(id);
   if (existing) {
     focusWindow(existing);
     return existing;
   }
   const offset = desk.open.size * 28;
-  const bar = h('div', { class: 'win-bar' },
+  const bar = h('div', { class: 'win-bar', ondblclick: (e) => { if (!e.target.closest('button')) minimizeWindow(id); } },
     h('span', { class: 'win-title' }, title),
     ...tools,
-    h('button', { class: 'win-close', 'aria-label': '閉じる', onclick: () => closeWindow(id) }, '×'),
+    h('button', { class: 'win-min', 'aria-label': 'タスクバーにしまう', title: 'タスクバーにしまう', onclick: () => minimizeWindow(id) }, '－'),
+    h('button', { class: 'win-close', 'aria-label': '閉じる', title: '閉じる', onclick: () => closeWindow(id) }, '×'),
   );
-  const win = h('div', {
-    class: 'win',
-    style: { width: `${w}px`, height: `${height}px`, left: `${140 + offset}px`, top: `${40 + offset}px` },
-  }, bar, h('div', { class: 'win-body' }, content));
+  const win = h('div', { class: 'win', 'data-id': id, 'data-label': label }, bar, h('div', { class: 'win-body' }, content));
   win.addEventListener('pointerdown', () => focusWindow(win));
   makeDraggable(bar, win);
+  makeResizable(win);
   desk.windows.append(win);
   desk.open.set(id, win);
+  setGeometry(win, { x: x ?? 140 + offset, y: y ?? 40 + offset, w, h: height });
   focusWindow(win);
+  saveLayout();
   return win;
 }
 
+// 位置と大きさを、デスクトップの中に収まるようにして決める
+function setGeometry(win, { x, y, w, h: height }) {
+  const areaW = desk.windows.clientWidth || window.innerWidth;
+  const areaH = desk.windows.clientHeight || window.innerHeight;
+  const width = clamp(w, MIN_W, areaW);
+  const hgt = clamp(height, MIN_H, areaH);
+  win.style.width = `${width}px`;
+  win.style.height = `${hgt}px`;
+  win.style.left = `${clamp(x, 0, areaW - width)}px`;
+  win.style.top = `${clamp(y, 0, areaH - hgt)}px`;
+}
+
+function geometryOf(win) {
+  return {
+    x: parseFloat(win.style.left), y: parseFloat(win.style.top),
+    w: parseFloat(win.style.width), h: parseFloat(win.style.height),
+  };
+}
+
 function focusWindow(win) {
+  win.classList.remove('minimized');
   win.style.zIndex = ++desk.z;
+  renderTaskbar();
+  return win;
+}
+
+function minimizeWindow(id) {
+  desk.open.get(id)?.classList.add('minimized');
+  renderTaskbar();
+  saveLayout();
 }
 
 function closeWindow(id) {
   desk.open.get(id)?.remove();
   desk.open.delete(id);
   if (id === 'mail') desk.mail = null;
+  renderTaskbar();
+  saveLayout();
+}
+
+// いちばん手前に出ているウィンドウ（しまっているものは除く）
+function topWindow() {
+  let top = null;
+  for (const win of desk.open.values()) {
+    if (win.classList.contains('minimized')) continue;
+    if (!top || Number(win.style.zIndex) > Number(top.style.zIndex)) top = win;
+  }
+  return top;
+}
+
+// タスクバーに、開いているウィンドウを並べる。押すと、しまう / 出す
+function renderTaskbar() {
+  if (!desk) return;
+  const top = topWindow();
+  fill(desk.tasks, [...desk.open].map(([id, win]) => {
+    const minimized = win.classList.contains('minimized');
+    return h('button', {
+      class: `task${minimized ? ' minimized' : ''}${win === top ? ' active' : ''}`,
+      title: minimized ? '出す' : win === top ? 'しまう' : '手前に出す',
+      onclick: () => {
+        if (win === top) return minimizeWindow(id);
+        focusWindow(win);
+        if (id === 'terminal') terminal?.focus();
+      },
+    }, win.dataset.label);
+  }));
+}
+
+// ウィンドウの配置をセーブに残す（再読み込みしても同じ配置で開く）
+let restoringLayout = false;
+function saveLayout() {
+  if (!desk || restoringLayout) return;
+  state.windows = [...desk.open]
+    .sort((a, b) => Number(a[1].style.zIndex) - Number(b[1].style.zIndex))
+    .map(([id, win]) => ({ id, ...geometryOf(win), min: win.classList.contains('minimized') }));
+  save();
+}
+
+function restoreLayout() {
+  restoringLayout = true;
+  try {
+    for (const saved of state.windows ?? []) {
+      if (saved.id === 'terminal' && !state.flags.terminal) continue;
+      const win = openApp(saved.id);
+      if (!win) continue;
+      setGeometry(win, saved);
+      if (saved.min) win.classList.add('minimized');
+    }
+  } finally {
+    restoringLayout = false;
+  }
+  renderTaskbar();
 }
 
 function makeDraggable(handle, win) {
@@ -649,16 +789,47 @@ function makeDraggable(handle, win) {
     const top = win.offsetTop;
     handle.setPointerCapture(e.pointerId);
     const move = (ev) => {
-      win.style.left = `${Math.max(0, left + ev.clientX - startX)}px`;
-      win.style.top = `${Math.max(0, top + ev.clientY - startY)}px`;
+      // タイトルバーが画面の外に出て、つかめなくならないようにする
+      win.style.left = `${clamp(left + ev.clientX - startX, 0, desk.windows.clientWidth - 80)}px`;
+      win.style.top = `${clamp(top + ev.clientY - startY, 0, desk.windows.clientHeight - 32)}px`;
     };
     const up = () => {
       handle.removeEventListener('pointermove', move);
       handle.removeEventListener('pointerup', up);
+      saveLayout();
     };
     handle.addEventListener('pointermove', move);
     handle.addEventListener('pointerup', up);
   });
+}
+
+// 右端・下端・右下の角をドラッグして、大きさを変える
+function makeResizable(win) {
+  for (const dir of ['e', 's', 'se']) {
+    const grip = h('div', { class: `win-resize win-resize-${dir}` });
+    grip.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      focusWindow(win);
+      const startX = e.clientX;
+      const startY = e.clientY;
+      const width = win.offsetWidth;
+      const height = win.offsetHeight;
+      grip.setPointerCapture(e.pointerId);
+      const move = (ev) => {
+        if (dir !== 's') win.style.width = `${clamp(width + ev.clientX - startX, MIN_W, desk.windows.clientWidth - win.offsetLeft)}px`;
+        if (dir !== 'e') win.style.height = `${clamp(height + ev.clientY - startY, MIN_H, desk.windows.clientHeight - win.offsetTop)}px`;
+      };
+      const up = () => {
+        grip.removeEventListener('pointermove', move);
+        grip.removeEventListener('pointerup', up);
+        saveLayout();
+      };
+      grip.addEventListener('pointermove', move);
+      grip.addEventListener('pointerup', up);
+    });
+    win.append(grip);
+  }
 }
 
 // 吹き出しは順番に1つずつ出す（同時に出ると前のものが読めないため）
@@ -667,6 +838,8 @@ let toastBusy = false;
 let toastDismiss = null;
 let toastShowing = null;  // 表示中で、まだ閉じていない気づき
 let toastFocused = false;  // 列を囲んでスクロールしたか（全部閉じたら入力欄まで戻す）
+let toastSeq = 0;  // 表示するたびに増やす。PCを離れたら古い吹き出しの「閉じる」を効かなくする
+let toastCleanup = null;  // 表示中の吹き出しが囲んでいる列・行の枠を外す
 let terminal = null;
 
 // focus（列名）/ focusRow（行に含まれる文字）を渡すと、気づきが出ているあいだ、ターミナルのその列・行を枠で囲む
@@ -698,15 +871,18 @@ function nextToast() {
   );
   toast.className = `toast ${item.kind}`;
   let done = false;
+  const seq = ++toastSeq;
   const live = terminal?.el.isConnected;
   const unfocus = (live && item.focus && terminal.focusColumn(item.focus))
     || (live && item.focusRow && terminal.focusRow(item.focusRow))
     || (() => {});
   if (item.focus || item.focusRow) toastFocused = true;
+  toastCleanup = unfocus;
   const dismiss = () => {
-    if (done || toast !== desk?.toast) return;
+    if (done || seq !== toastSeq || !desk) return;
     done = true;
     unfocus();
+    toastCleanup = null;
     toastDismiss = null;
     toastShowing = null;
     toast.classList.add('hidden');
@@ -740,11 +916,13 @@ document.addEventListener('keydown', (e) => {
 });
 
 // 主人公がノートを見ながら、ターミナルでSQLを打ってみせる場面
-// 場面は手順の並び。say: セリフ / notebook: ノートをそのページで開く / type: SQLを打って実行する
+// 場面は手順の並び。say: セリフ / notebook: ノートをそのページで開く / type: SQLを打って実行する / flag: 進み具合の印を付ける
+// if を付けた手順は、その条件に合うときだけ
 // focus（列名）を付けた say は、その列を枠で囲みながら話す
 async function playScene(id) {
   if (!terminal?.el.isConnected) openApp('terminal');
   for (const step of S.SCENES[id]) {
+    if (step.if && !step.if(state)) continue;
     if (step.notebook) {
       if (!state.items.includes('notebook')) {
         state.items.push('notebook');
@@ -760,6 +938,9 @@ async function playScene(id) {
       const unfocus = step.focus ? terminal.focusColumn(step.focus) : () => {};
       await talk(step.say);
       unfocus();
+    } else if (step.flag) {
+      state.flags[step.flag] = true;
+      save();
     }
   }
   terminal.scrollToBottom();
@@ -939,7 +1120,7 @@ function buildTerminal() {
       for (const mono of S.MONOLOGUES) {
         if (mono.chapter && mono.chapter !== state.chapter) continue;
         if (mono.after && !state.monologues.includes(mono.after)) continue;
-        if (!state.monologues.includes(mono.id) && mono.when(visible)) {
+        if (!state.monologues.includes(mono.id) && mono.when(visible, text)) {
           state.monologues.push(mono.id);
           setTimeout(() => showToast(mono.text, 'monologue', mono), 700);
         }
@@ -962,9 +1143,12 @@ function buildTerminal() {
 function restoreSnapshot() {
   gdb.replace(fromBase64(localStorage.getItem(SNAP_KEY)));
   save();
-  if (desk?.open.has('terminal')) {
+  const old = desk?.open.get('terminal');
+  if (old) {
+    const geometry = geometryOf(old);
     closeWindow('terminal');
-    openApp('terminal');
+    setGeometry(openApp('terminal'), geometry);
+    saveLayout();
   }
 }
 
@@ -1109,7 +1293,7 @@ async function typeLines(container, lines, pause = 1500) {
 }
 
 async function showTrueEnd() {
-  desk = null;
+  dropDesk();
   const body = h('div', { class: 'ending-lines' });
   app.replaceChildren(h('div', { class: 'scene ending' }, body));
   if (!(await typeLines(body, S.TRUE_END.lines))) return;
@@ -1143,7 +1327,7 @@ async function showTrueEnd() {
 }
 
 async function showNormalEnd(truth) {
-  desk = null;
+  dropDesk();
   const body = h('div', { class: 'ending-lines' });
   app.replaceChildren(h('div', { class: 'scene ending' }, body));
   if (!(await typeLines(body, S.NORMAL_END.lines))) return;
@@ -1168,7 +1352,7 @@ async function showNormalEnd(truth) {
 }
 
 async function showBadEnd() {
-  desk = null;
+  dropDesk();
   setMenu(false);
   sfx.bad();
   state.scene = 'badEnd';
@@ -1289,7 +1473,8 @@ function todoLines() {
   if (state.inbox.some((id) => !state.read.includes(id))) return ['新しいメールを読もう', 'パソコンの「メール」から'];
   if (state.solved[n]) return null;
   const todo = S.TODOS[n];
-  return [todo.main, typeof todo.sub === 'function' ? todo.sub(state.items) : todo.sub];
+  const text = (v) => (typeof v === 'function' ? v(state) : v);
+  return [text(todo.main), text(todo.sub)];
 }
 
 function updateTodo() {
